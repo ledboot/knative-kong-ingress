@@ -18,7 +18,6 @@ replace (
 
 require (
 	github.com/appscode/jsonpatch v0.0.0-20190108182946-7c0e3b262f30 // indirect
-	github.com/ghodss/yaml v0.0.0-20150909031657-73d445a93680
 	github.com/go-logr/logr v0.1.0 // indirect
 	github.com/go-logr/zapr v0.1.1 // indirect
 	github.com/golang/groupcache v0.0.0-20190129154638-5b532d6fd5ef // indirect
@@ -29,6 +28,7 @@ require (
 	github.com/googleapis/gnostic v0.2.0 // indirect
 	github.com/gregjones/httpcache v0.0.0-20190212212710-3befbb6ad0cc // indirect
 	github.com/hashicorp/golang-lru v0.5.1 // indirect
+	github.com/hbagdi/go-kong v0.5.0
 	github.com/imdario/mergo v0.3.7 // indirect
 	github.com/json-iterator/go v1.1.6 // indirect
 	github.com/knative/pkg v0.0.0-20190607011741-d8a2a739d6b3

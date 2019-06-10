@@ -3,11 +3,13 @@ package clusteringress
 import (
 	"context"
 	"fmt"
+	"github.com/hbagdi/go-kong/kong"
 	"github.com/knative/pkg/kmeta"
 	"github.com/knative/pkg/logging"
 	"github.com/knative/serving/pkg/apis/networking"
 	networkingv1alpha1 "github.com/knative/serving/pkg/apis/networking/v1alpha1"
 	"github.com/knative/serving/pkg/apis/serving"
+	konginner "github.com/ledboot/knative-kong-ingress/pkg/controller/kong"
 	corev1 "k8s.io/api/core/v1"
 	"k8s.io/apimachinery/pkg/api/equality"
 	"k8s.io/apimachinery/pkg/api/errors"
@@ -26,8 +28,8 @@ const (
 	kongIngressClass = "kong.ingress.networking.knative.dev"
 )
 
-func Add(mgr manager.Manager) error {
-	return add(mgr, newReconciler(mgr))
+func Add(mgr manager.Manager, kongClient *kong.Client) error {
+	return add(mgr, newReconciler(mgr, kongClient))
 }
 
 func add(mgr manager.Manager, r reconcile.Reconciler) error {
@@ -49,21 +51,27 @@ func add(mgr manager.Manager, r reconcile.Reconciler) error {
 	return nil
 }
 
-func newReconciler(mgr manager.Manager) reconcile.Reconciler {
+func newReconciler(mgr manager.Manager, client *kong.Client) reconcile.Reconciler {
 	return &ReconcileClusterIngress{
-		client: mgr.GetClient(),
-		schema: mgr.GetScheme(),
+		client:        mgr.GetClient(),
+		schema:        mgr.GetScheme(),
+		kongClient:    client,
+		kongNamespace: "kong",
 	}
+
 }
 
 type ReconcileClusterIngress struct {
 	client        client.Client
 	schema        *runtime.Scheme
+	kongClient    *kong.Client
 	kongNamespace string
 }
 
 func (r *ReconcileClusterIngress) Reconcile(request reconcile.Request) (reconcile.Result, error) {
 	ctx := context.TODO()
+	logger := logging.FromContext(ctx)
+	logger.Info("Reconcile")
 	original := &networkingv1alpha1.ClusterIngress{}
 	err := r.client.Get(ctx, request.NamespacedName, original)
 	if err != nil {
@@ -93,11 +101,11 @@ func (r *ReconcileClusterIngress) reconcile(ctx context.Context, ci *networkingv
 	ci.SetDefaults(ctx)
 	ci.Status.InitializeConditions()
 
-	svc, err := MakeService(ctx, ci, r.kongNamespace)
+	kongState, err := MakeService(ctx, ci, r.kongNamespace)
 	if err != nil {
 		return err
 	}
-	if err := r.reconcileService(ctx, ci, svc); err != nil {
+	if err := r.reconcileService(ctx, ci, &kongState.CoreService); err != nil {
 		return err
 	}
 	ci.Status.MarkNetworkConfigured()
@@ -121,6 +129,8 @@ func (r *ReconcileClusterIngress) reconcileService(ctx context.Context, ci *netw
 			logger.Errorw("Failed to create Ambassador config on K8s Service", err)
 			return err
 		}
+
+
 		logger.Infof("Created Ambassador config on K8s Service %q in namespace %q", desired.Name, desired.Namespace)
 	} else if err != nil {
 		return err
@@ -138,26 +148,40 @@ func (r *ReconcileClusterIngress) reconcileService(ctx context.Context, ci *netw
 	return nil
 }
 
-func MakeService(ctx context.Context, ci *networkingv1alpha1.ClusterIngress, kongNamespace string) (*corev1.Service, error) {
-	logger := logging.FromContext(ctx)
-	ambassadorYaml := ""
+func MakeService(ctx context.Context, ci *networkingv1alpha1.ClusterIngress, kongNamespace string) (*konginner.KongState, error) {
+	state := &konginner.KongState{}
 	for _, rule := range ci.Spec.Rules {
 		hosts := rule.Hosts
-		logger.Info(hosts)
 		for _, path := range rule.HTTP.Paths {
-			prefix := path.Path
-			logger.Info(prefix)
 			for _, split := range path.Splits {
-				service := fmt.Sprintf("%s.%s:%s", split.ServiceName, split.ServiceNamespace, split.ServicePort.String())
-				logger.Info(service)
+
+				kongHost := fmt.Sprintf("%s.%s.%s", split.ServiceName, split.ServiceNamespace, "svc.cluster.local")
+				serviceName := fmt.Sprintf("%s-%s", split.ServiceName, split.ServiceNamespace)
+				routeName := fmt.Sprintf("%s-%s", serviceName, "route")
+
+				kongService := &kong.Service{
+					Host: kong.String(kongHost),
+					Name: kong.String(serviceName),
+					Port: kong.Int(split.ServicePort.IntValue()),
+				}
+				kongRoute := &kong.Route{
+					Name:      kong.String(routeName),
+					Hosts:     kong.StringSlice(hosts...),
+					Protocols: kong.StringSlice("http", "https"),
+				}
+				route := &konginner.Route{
+					Route: *kongRoute,
+				}
+				service := &konginner.Service{
+					Service: *kongService,
+				}
+				service.Routes = append(service.Routes, *route)
+				state.Services = append(state.Services, *service)
 			}
 		}
 	}
 
-	logger.Infof("Creating Ambassador Config:\n %s\n", ambassadorYaml)
-
 	annotations := ci.ObjectMeta.Annotations
-	annotations["getambassador.io/config"] = string(ambassadorYaml)
 
 	labels := make(map[string]string)
 	labels[networking.IngressLabelKey] = ci.Name
@@ -166,7 +190,7 @@ func MakeService(ctx context.Context, ci *networkingv1alpha1.ClusterIngress, kon
 	labels[serving.RouteLabelKey] = ingressLabels[serving.RouteLabelKey]
 	labels[serving.RouteNamespaceLabelKey] = ingressLabels[serving.RouteNamespaceLabelKey]
 
-	return &corev1.Service{
+	coreSvc := &corev1.Service{
 		ObjectMeta: metav1.ObjectMeta{
 			Name:            ci.Name,
 			Namespace:       kongNamespace,
@@ -178,5 +202,21 @@ func MakeService(ctx context.Context, ci *networkingv1alpha1.ClusterIngress, kon
 			Type:      corev1.ServiceTypeClusterIP,
 			ClusterIP: "None",
 		},
-	}, nil
+	}
+	state.CoreService = *coreSvc
+	return state, nil
+}
+
+type Mapping struct {
+	APIVersion        string            `json:"apiVersion"`
+	Kind              string            `json:"kind"`
+	Name              string            `json:"name"`
+	Prefix            string            `json:"prefix"`
+	PrefixRegex       bool              `json:"prefix_regex"`
+	Service           string            `json:"service"`
+	Weight            int               `json:"weight"`
+	AddRequestHeaders map[string]string `json:"add_request_headers,omitempty"`
+	Host              string            `json:"host"`
+	HostRegex         bool              `json:"host_regex"`
+	TimeoutMs         int64             `json:"timeout_ms"`
 }
