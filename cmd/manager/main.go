@@ -1,69 +1,83 @@
 package main
 
 import (
-	"context"
 	"flag"
 	"github.com/hbagdi/go-kong/kong"
-	"github.com/knative/pkg/logging"
 	"github.com/ledboot/knative-kong-ingress/pkg/apis"
+	"github.com/ledboot/knative-kong-ingress/pkg/configmap"
 	"github.com/ledboot/knative-kong-ingress/pkg/controller"
-	"github.com/operator-framework/operator-sdk/pkg/log/zap"
+	"github.com/ledboot/knative-kong-ingress/pkg/controller/kongctl"
+	"github.com/ledboot/knative-kong-ingress/pkg/logging"
+	"log"
 	"os"
 	"sigs.k8s.io/controller-runtime/pkg/client/config"
 	"sigs.k8s.io/controller-runtime/pkg/manager"
-	logf "sigs.k8s.io/controller-runtime/pkg/runtime/log"
 	"sigs.k8s.io/controller-runtime/pkg/runtime/signals"
 )
+
+const component = "cmd"
 
 var (
 	kongAdminURL = flag.String("kong_admin_url", "http://192.168.64.5:32216", "Kong Admin URL")
 )
 
 func main() {
-	ctx := context.TODO()
-	logf.SetLogger(zap.Logger())
-	log := logging.FromContext(ctx)
+
+	//loggingConfigMap, err := configmap.Load("/etc/config-logging")
+	loggingConfigMap, err := configmap.Load("/Users/gwynn/go/src/github.com/ledboot/knative-kong-ingress/config-logging")
+	if err != nil {
+		log.Fatalf("Error loading logging configuration: %v", err)
+	}
+	loggingConfig, err := logging.NewConfigFromMap(loggingConfigMap)
+	if err != nil {
+		log.Fatalf("Error parsing logging configuration: %v", err)
+	}
+	logger, _ := logging.NewLogger(loggingConfig, component)
+	defer logger.Sync()
+
 	cfg, err := config.GetConfig()
 
 	if err != nil {
-		log.Error(err, "")
+		logger.Error(err)
 		os.Exit(1)
 	}
 
 	mgr, err := manager.New(cfg, manager.Options{})
 
-	log.Info(mgr.GetConfig().Host)
+	logger.Info(mgr.GetConfig().Host)
 
 	if err != nil {
-		log.Error(err, "")
+		logger.Error(err)
 		os.Exit(1)
 	}
 
 	kongClient, err := kong.NewClient(kongAdminURL, nil)
 	if err != nil {
-		log.Error("make kong client error :", err)
+		logger.Error("make kongctl client error :", err)
 		os.Exit(1)
 	}
 	root, err := kongClient.Root(nil)
 	if err != nil {
-		log.Error(err, "can not connect kong admin")
+		logger.Error(err, "can not connect kongctl admin")
 		os.Exit(1)
 	}
 
-	log.Infof("kong version : %s", root["version"])
+	kongController := kongctl.NewKongController(kongClient, logger)
+
+	logger.Infof("kongctl version : %s", root["version"])
 
 	if err := apis.AddToScheme(mgr.GetScheme()); err != nil {
-		log.Error(err, "")
+		logger.Error(err)
 		os.Exit(1)
 	}
 
-	if err := controller.AddToManager(mgr,kongClient); err != nil {
-		log.Error(err, "")
+	if err := controller.AddToManager(mgr, kongController); err != nil {
+		logger.Error(err)
 		os.Exit(1)
 	}
-	log.Info("Starting the Cmd.")
+	logger.Info("Starting the Cmd.")
 	if err := mgr.Start(signals.SetupSignalHandler()); err != nil {
-		log.Error(err, "Manager exited non-zero")
+		logger.Error(err, "Manager exited non-zero")
 		os.Exit(1)
 	}
 

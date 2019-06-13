@@ -1,13 +1,19 @@
 package controller
 
 import (
-	"github.com/hbagdi/go-kong/kong"
+	"github.com/ledboot/knative-kong-ingress/pkg/controller/clusteringress"
+	"github.com/ledboot/knative-kong-ingress/pkg/controller/kongctl"
 	"sigs.k8s.io/controller-runtime/pkg/manager"
 )
 
-var AddToManagerFuncs []func(manager.Manager, *kong.Client) error
+func init() {
+	// AddToManagerFuncs is a list of functions to create controllers and add them to a manager.
+	AddToManagerFuncs = append(AddToManagerFuncs, clusteringress.Add)
+}
 
-func AddToManager(m manager.Manager, client *kong.Client) error {
+var AddToManagerFuncs []func(manager.Manager, *kongctl.KongController) error
+
+func AddToManager(m manager.Manager, client *kongctl.KongController) error {
 	for _, f := range AddToManagerFuncs {
 		if err := f(m, client); err != nil {
 			return err
