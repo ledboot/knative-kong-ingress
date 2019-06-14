@@ -76,14 +76,4 @@ func (c *KongController) Delete(service *kong.Service) {
 	if err = c.client.Services.Delete(nil, service.Name); err != nil {
 		c.logger.Errorf("delete kongctl service error: %v", err)
 	}
-	//delete route which is associated the service
-	//for _, r := range service.Routes {
-	//	if err := c.client.Routes.Delete(nil, r.Route.Name); err != nil {
-	//		c.logger.Errorf("delete kongctl route error: %v", err)
-	//	}
-	//}
-	//err := c.client.Services.Delete(nil, service.Service.Name)
-	//if err != nil {
-	//	c.logger.Errorf("delete kongctl service error: %v", err)
-	//}
 }

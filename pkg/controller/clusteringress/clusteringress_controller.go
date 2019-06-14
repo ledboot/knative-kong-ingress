@@ -161,7 +161,7 @@ func (r *ReconcileClusterIngress) reconcileService(ctx context.Context, ci *netw
 	svc := &corev1.Service{}
 	err := r.client.Get(ctx, types.NamespacedName{Name: desired.CoreService.Name, Namespace: desired.CoreService.Namespace}, svc)
 	if err != nil && errors.IsNotFound(err) {
-		err = r.client.Create(ctx, &desired.CoreService)
+		err = r.client.Create(ctx, desired.CoreService)
 
 		if err != nil {
 			logger.Errorw("Failed to create kong config on K8s Service", err)
@@ -255,7 +255,7 @@ func MakeService(ctx context.Context, ci *networkingv1alpha1.ClusterIngress, kon
 			ClusterIP: "None",
 		},
 	}
-	state.CoreService = *coreSvc
+	state.CoreService = coreSvc
 	return state, nil
 }
 

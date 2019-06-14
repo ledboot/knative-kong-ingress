@@ -53,7 +53,7 @@ type KongState struct {
 	Certificates  []*Certificate
 	GlobalPlugins []*Plugin
 	Consumers     []*Consumer
-	CoreService   corev1.Service
+	CoreService   *corev1.Service
 }
 
 type Certificate struct {
